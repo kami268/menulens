@@ -4,121 +4,121 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="manifest" href="manifest.json">
-  <title>MenuLens</title>
+  <title>MenuLens In-Place</title>
   <style>
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
       margin: 0;
-      background: #1a1a1a;
+      background: #111;
       color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
     }
     header {
-      width: 100%;
       padding: 12px 16px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: #242424;
+      background: #1c1c1e;
+      border-bottom: 1px solid #2c2c2e;
     }
-    .status { font-size: 14px; color: #aaa; }
     #viewport {
       flex: 1;
-      width: 100%;
+      position: relative;
+      overflow: auto;
       display: flex;
       justify-content: center;
       align-items: center;
-      overflow: auto;
-      position: relative;
+      background: #000;
     }
     canvas {
+      display: none;
       max-width: 100%;
       height: auto;
-      display: none;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
-    .controls {
-      padding: 16px;
-      width: 100%;
+    .bottom-bar {
+      padding: 14px 20px;
+      background: #1c1c1e;
       display: flex;
-      gap: 10px;
+      gap: 12px;
       justify-content: center;
-      background: #242424;
+      border-top: 1px solid #2c2c2e;
     }
-    button {
-      padding: 12px 20px;
+    button.action-btn {
+      padding: 12px 24px;
       font-size: 16px;
       font-weight: 600;
       border: none;
       border-radius: 25px;
       cursor: pointer;
-      background: #007aff;
+      background: #0a84ff;
       color: white;
     }
     button.secondary { background: #3a3a3c; }
     #loading {
       position: absolute;
-      background: rgba(0,0,0,0.75);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
       padding: 16px 24px;
       border-radius: 12px;
       display: none;
       font-weight: bold;
+      border: 1px solid #444;
+      z-index: 10;
     }
   </style>
 </head>
 <body>
 
   <header>
-    <div><strong>MenuLens</strong></div>
-    <div id="status" class="status">未載入圖片</div>
-    <button class="secondary" style="padding: 6px 12px; font-size: 12px;" onclick="setApiKey()">設定 Key</button>
+    <div><strong>MenuLens 原位覆蓋版</strong></div>
+    <button class="action-btn secondary" style="padding: 6px 12px; font-size: 12px;" onclick="setApiKey()">設定 Key</button>
   </header>
 
   <div id="viewport">
-    <div id="loading">翻譯中，請稍候...</div>
+    <div id="loading">正在抹除原文並填入翻譯...</div>
     <div id="placeholder" style="color: #666;">點擊下方按鈕拍攝 Menu</div>
     <canvas id="mainCanvas"></canvas>
   </div>
 
-  <div class="controls">
+  <div class="bottom-bar">
     <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
-    <button onclick="document.getElementById('cameraInput').click()">📷 拍攝菜單</button>
-    <button id="toggleBtn" class="secondary" style="display:none;" onclick="toggleView()">顯示原文</button>
+    <button class="action-btn" onclick="document.getElementById('cameraInput').click()">📷 拍攝菜單</button>
+    <button id="toggleBtn" class="action-btn secondary" style="display:none;" onclick="toggleView()">顯示原文</button>
   </div>
 
   <script>
-    // 註冊 PWA Service Worker
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js');
     }
 
     const canvas = document.getElementById('mainCanvas');
     const ctx = canvas.getContext('2d');
-    const statusText = document.getElementById('status');
     const loading = document.getElementById('loading');
     const placeholder = document.getElementById('placeholder');
     const toggleBtn = document.getElementById('toggleBtn');
 
     let originalImageData = null;
     let translatedImageData = null;
-    let showingOriginal = false;
+    let isShowingOrigin = false;
 
     function getApiKey() {
       let key = localStorage.getItem('gemini_api_key');
       if (!key) {
-        key = prompt("請輸入你的 Google Gemini API Key：");
+        key = prompt("請輸入 Gemini API Key：");
         if (key) localStorage.setItem('gemini_api_key', key.trim());
       }
       return key;
     }
 
     function setApiKey() {
-      const current = localStorage.getItem('gemini_api_key') || '';
-      const key = prompt("更新 Gemini API Key：", current);
+      const cur = localStorage.getItem('gemini_api_key') || '';
+      const key = prompt("更新 Gemini API Key：", cur);
       if (key !== null) localStorage.setItem('gemini_api_key', key.trim());
     }
 
@@ -127,21 +127,17 @@
       if (!file) return;
 
       const apiKey = getApiKey();
-      if (!apiKey) {
-        alert("請先設定 API Key 方可使用");
-        return;
-      }
+      if (!apiKey) return alert("請先設定 API Key");
 
       placeholder.style.display = 'none';
       loading.style.display = 'block';
-      statusText.innerText = "處理圖片中...";
 
       const img = new Image();
       img.src = URL.createObjectURL(file);
       await img.decode();
 
-      // 壓縮圖片（最長邊 1600px），兼顧速度與辨識精度
-      const maxDim = 1600;
+      // 適當控制解析度，長邊 1800px 確保字型足夠清晰
+      const maxDim = 1800;
       let w = img.width, h = img.height;
       if (w > h && w > maxDim) {
         h = Math.round((h * maxDim) / w);
@@ -156,104 +152,159 @@
       ctx.drawImage(img, 0, 0, w, h);
       canvas.style.display = 'block';
 
-      // 備份原圖像素
       originalImageData = ctx.getImageData(0, 0, w, h);
-
-      // 轉成 Base64 準備傳給 API
       const base64Data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-      statusText.innerText = "AI 翻譯中...";
 
       try {
-        await callGeminiAPI(apiKey, base64Data, w, h);
-        statusText.innerText = "完成";
+        await executeDirectTranslation(apiKey, base64Data, w, h);
         toggleBtn.style.display = "inline-block";
         toggleBtn.innerText = "顯示原文";
-        showingOriginal = false;
+        isShowingOrigin = false;
       } catch (err) {
-        alert("翻譯失敗: " + err.message);
-        statusText.innerText = "出錯";
+        alert("處理失敗: " + err.message);
       } finally {
         loading.style.display = 'none';
       }
     });
 
-    async function callGeminiAPI(apiKey, base64Data, imgWidth, imgHeight) {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    async function executeDirectTranslation(apiKey, base64Data, imgW, imgH) {
+      const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b"];
+      
+      const prompt = `你是一個菜單本地化圖像處理助手。這是一張菜單（請特別注意：許多日文菜單是「垂直直排書寫」）。
+請辨識每個菜名/標題的精準範圍。
+格式規範：
+1. "box_2d": [ymin, xmin, ymax, xmax]，坐標嚴格標準化至 0~1000。邊界框必須緊密貼合該菜品文字本身。
+2. "zh": 繁體中文簡潔翻譯（儘量控制在2-5個字內，如：三文魚、炙燒鯖魚、海鮮沙律、炸雞），以便精準覆蓋原文。
 
-      const prompt = `你是一個專業菜單翻譯員。請分析圖片中的菜單：
-1. 找出所有主要菜名或餐點項目。
-2. 輸出每個項目的邊界框 [ymin, xmin, ymax, xmax]（坐標標準化為 0 至 1000）。
-3. 翻譯成香港繁體中文，並在括號附上主要材料或說明（例如：「生姜焼き (日式薑汁炒豬肉)」）。
-
-請嚴格輸出 JSON 陣列，不要包裹 Markdown 標籤，格式如下：
+嚴格輸出 JSON 陣列格式：
 [
   {
     "box_2d": [ymin, xmin, ymax, xmax],
-    "translated": "繁體中文翻譯"
+    "zh": "炙燒三文魚"
   }
 ]`;
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: "image/jpeg", data: base64Data } }
-            ]
-          }],
-          generationConfig: { response_mime_type: "application/json" }
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || "API 請求失敗");
+      let items = null;
+      for (const m of models) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+                ]
+              }],
+              generationConfig: { response_mime_type: "application/json" }
+            })
+          });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          items = JSON.parse(data.candidates[0].content.parts[0].text);
+          break;
+        } catch (e) {
+          await new Promise(r => setTimeout(r, 600));
+        }
       }
 
-      const resData = await response.json();
-      const rawText = resData.candidates[0].content.parts[0].text;
-      const items = JSON.parse(rawText);
+      if (!items) throw new Error("API 忙碌中，請稍候重試");
 
-      // 繪製半透明標籤覆蓋
+      // 開始圖內原位抹除與渲染
       items.forEach(item => {
         const [ymin, xmin, ymax, xmax] = item.box_2d;
-        const realX = (xmin / 1000) * imgWidth;
-        const realY = (ymin / 1000) * imgHeight;
-        const realW = ((xmax - xmin) / 1000) * imgWidth;
-        const realH = ((ymax - ymin) / 1000) * imgHeight;
+        const rx = (xmin / 1000) * imgW;
+        const ry = (ymin / 1000) * imgH;
+        const rw = ((xmax - xmin) / 1000) * imgW;
+        const rh = ((ymax - ymin) / 1000) * imgH;
 
-        const padH = Math.max(realH, 36);
+        if (rw <= 5 || rh <= 5) return;
 
-        // 畫黑色半透明底色框
-        ctx.fillStyle = "rgba(10, 10, 10, 0.85)";
-        ctx.beginPath();
-        ctx.roundRect(realX, realY, Math.max(realW, 120), padH, 6);
-        ctx.fill();
+        // 1. 採樣文字邊界底色
+        const { bgColor, textColor } = sampleColor(rx, ry, rw, rh, imgW, imgH);
 
-        // 填入繁體中文
-        ctx.fillStyle = "#ffffff";
-        const fontSize = Math.max(16, Math.floor(padH * 0.55));
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textBaseline = "middle";
-        ctx.fillText(item.translated, realX + 8, realY + (padH / 2));
+        // 2. 用底色精準覆蓋原字（原地抹字）
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(Math.max(0, rx - 1), Math.max(0, ry - 1), rw + 2, rh + 2);
+
+        // 3. 判斷直排還是橫排 (Height > Width 即為直排)
+        const isVertical = rh > rw * 1.25;
+        const text = item.zh || "";
+        ctx.fillStyle = textColor;
+
+        if (isVertical) {
+          // 直排文字繪製（由上至下單字排列）
+          const chars = text.split("");
+          let fontSize = Math.min(rw * 0.9, (rh / chars.length) * 0.95);
+          fontSize = Math.max(11, Math.min(28, fontSize));
+
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          const totalTextH = chars.length * fontSize;
+          const startY = ry + (rh - totalTextH) / 2 + fontSize / 2;
+          const centerX = rx + rw / 2;
+
+          chars.forEach((char, idx) => {
+            ctx.fillText(char, centerX, startY + (idx * fontSize));
+          });
+        } else {
+          // 橫排文字繪製
+          let fontSize = Math.min(rh * 0.8, (rw / text.length) * 1.1);
+          fontSize = Math.max(11, Math.min(26, fontSize));
+
+          ctx.font = `bold ${fontSize}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          ctx.fillText(text, rx + rw / 2, ry + rh / 2, rw);
+        }
       });
 
-      // 保存已翻譯圖層
-      translatedImageData = ctx.getImageData(0, 0, imgWidth, imgHeight);
+      translatedImageData = ctx.getImageData(0, 0, imgW, imgH);
+    }
+
+    // 採樣邊界像素以獲取自然的背景色與最佳反差文字顏色
+    function sampleColor(x, y, w, h, imgW, imgH) {
+      const samplePoints = [
+        [Math.max(0, x - 2), Math.max(0, y - 2)],
+        [Math.min(imgW - 1, x + w + 2), Math.max(0, y - 2)],
+        [Math.max(0, x - 2), Math.min(imgH - 1, y + h + 2)],
+        [Math.min(imgW - 1, x + w + 2), Math.min(imgH - 1, y + h + 2)]
+      ];
+
+      let r = 0, g = 0, b = 0;
+      samplePoints.forEach(([sx, sy]) => {
+        const p = ctx.getImageData(Math.floor(sx), Math.floor(sy), 1, 1).data;
+        r += p[0]; g += p[1]; b += p[2];
+      });
+
+      r = Math.round(r / 4);
+      g = Math.round(g / 4);
+      b = Math.round(b / 4);
+
+      // 計算亮度 (Luminance) 決定文字顏色是黑色還是白色
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const textColor = lum > 130 ? "#111111" : "#ffffff";
+
+      return {
+        bgColor: `rgb(${r},${g},${b})`,
+        textColor: textColor
+      };
     }
 
     function toggleView() {
       if (!originalImageData || !translatedImageData) return;
-      if (showingOriginal) {
+      if (isShowingOrigin) {
         ctx.putImageData(translatedImageData, 0, 0);
         toggleBtn.innerText = "顯示原文";
-        showingOriginal = false;
+        isShowingOrigin = false;
       } else {
         ctx.putImageData(originalImageData, 0, 0);
         toggleBtn.innerText = "顯示翻譯";
-        showingOriginal = true;
+        isShowingOrigin = true;
       }
     }
   </script>
