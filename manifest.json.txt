@@ -1,0 +1,15 @@
+{
+  "name": "Menu 翻譯器",
+  "short_name": "MenuLens",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3875/3875433.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

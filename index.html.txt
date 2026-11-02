@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="manifest" href="manifest.json">
+  <title>MenuLens</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #1a1a1a;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    header {
+      width: 100%;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #242424;
+    }
+    .status { font-size: 14px; color: #aaa; }
+    #viewport {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: auto;
+      position: relative;
+    }
+    canvas {
+      max-width: 100%;
+      height: auto;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .controls {
+      padding: 16px;
+      width: 100%;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      background: #242424;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 25px;
+      cursor: pointer;
+      background: #007aff;
+      color: white;
+    }
+    button.secondary { background: #3a3a3c; }
+    #loading {
+      position: absolute;
+      background: rgba(0,0,0,0.75);
+      padding: 16px 24px;
+      border-radius: 12px;
+      display: none;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div><strong>MenuLens</strong></div>
+    <div id="status" class="status">未載入圖片</div>
+    <button class="secondary" style="padding: 6px 12px; font-size: 12px;" onclick="setApiKey()">設定 Key</button>
+  </header>
+
+  <div id="viewport">
+    <div id="loading">翻譯中，請稍候...</div>
+    <div id="placeholder" style="color: #666;">點擊下方按鈕拍攝 Menu</div>
+    <canvas id="mainCanvas"></canvas>
+  </div>
+
+  <div class="controls">
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+    <button onclick="document.getElementById('cameraInput').click()">📷 拍攝菜單</button>
+    <button id="toggleBtn" class="secondary" style="display:none;" onclick="toggleView()">顯示原文</button>
+  </div>
+
+  <script>
+    // 註冊 PWA Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+
+    const canvas = document.getElementById('mainCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    const loading = document.getElementById('loading');
+    const placeholder = document.getElementById('placeholder');
+    const toggleBtn = document.getElementById('toggleBtn');
+
+    let originalImageData = null;
+    let translatedImageData = null;
+    let showingOriginal = false;
+
+    function getApiKey() {
+      let key = localStorage.getItem('gemini_api_key');
+      if (!key) {
+        key = prompt("請輸入你的 Google Gemini API Key：");
+        if (key) localStorage.setItem('gemini_api_key', key.trim());
+      }
+      return key;
+    }
+
+    function setApiKey() {
+      const current = localStorage.getItem('gemini_api_key') || '';
+      const key = prompt("更新 Gemini API Key：", current);
+      if (key !== null) localStorage.setItem('gemini_api_key', key.trim());
+    }
+
+    document.getElementById('cameraInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        alert("請先設定 API Key 方可使用");
+        return;
+      }
+
+      placeholder.style.display = 'none';
+      loading.style.display = 'block';
+      statusText.innerText = "處理圖片中...";
+
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      await img.decode();
+
+      // 壓縮圖片（最長邊 1600px），兼顧速度與辨識精度
+      const maxDim = 1600;
+      let w = img.width, h = img.height;
+      if (w > h && w > maxDim) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else if (h > maxDim) {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.style.display = 'block';
+
+      // 備份原圖像素
+      originalImageData = ctx.getImageData(0, 0, w, h);
+
+      // 轉成 Base64 準備傳給 API
+      const base64Data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      statusText.innerText = "AI 翻譯中...";
+
+      try {
+        await callGeminiAPI(apiKey, base64Data, w, h);
+        statusText.innerText = "完成";
+        toggleBtn.style.display = "inline-block";
+        toggleBtn.innerText = "顯示原文";
+        showingOriginal = false;
+      } catch (err) {
+        alert("翻譯失敗: " + err.message);
+        statusText.innerText = "出錯";
+      } finally {
+        loading.style.display = 'none';
+      }
+    });
+
+    async function callGeminiAPI(apiKey, base64Data, imgWidth, imgHeight) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+      const prompt = `你是一個專業菜單翻譯員。請分析圖片中的菜單：
+1. 找出所有主要菜名或餐點項目。
+2. 輸出每個項目的邊界框 [ymin, xmin, ymax, xmax]（坐標標準化為 0 至 1000）。
+3. 翻譯成香港繁體中文，並在括號附上主要材料或說明（例如：「生姜焼き (日式薑汁炒豬肉)」）。
+
+請嚴格輸出 JSON 陣列，不要包裹 Markdown 標籤，格式如下：
+[
+  {
+    "box_2d": [ymin, xmin, ymax, xmax],
+    "translated": "繁體中文翻譯"
+  }
+]`;
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+            ]
+          }],
+          generationConfig: { response_mime_type: "application/json" }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || "API 請求失敗");
+      }
+
+      const resData = await response.json();
+      const rawText = resData.candidates[0].content.parts[0].text;
+      const items = JSON.parse(rawText);
+
+      // 繪製半透明標籤覆蓋
+      items.forEach(item => {
+        const [ymin, xmin, ymax, xmax] = item.box_2d;
+        const realX = (xmin / 1000) * imgWidth;
+        const realY = (ymin / 1000) * imgHeight;
+        const realW = ((xmax - xmin) / 1000) * imgWidth;
+        const realH = ((ymax - ymin) / 1000) * imgHeight;
+
+        const padH = Math.max(realH, 36);
+
+        // 畫黑色半透明底色框
+        ctx.fillStyle = "rgba(10, 10, 10, 0.85)";
+        ctx.beginPath();
+        ctx.roundRect(realX, realY, Math.max(realW, 120), padH, 6);
+        ctx.fill();
+
+        // 填入繁體中文
+        ctx.fillStyle = "#ffffff";
+        const fontSize = Math.max(16, Math.floor(padH * 0.55));
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textBaseline = "middle";
+        ctx.fillText(item.translated, realX + 8, realY + (padH / 2));
+      });
+
+      // 保存已翻譯圖層
+      translatedImageData = ctx.getImageData(0, 0, imgWidth, imgHeight);
+    }
+
+    function toggleView() {
+      if (!originalImageData || !translatedImageData) return;
+      if (showingOriginal) {
+        ctx.putImageData(translatedImageData, 0, 0);
+        toggleBtn.innerText = "顯示原文";
+        showingOriginal = false;
+      } else {
+        ctx.putImageData(originalImageData, 0, 0);
+        toggleBtn.innerText = "顯示翻譯";
+        showingOriginal = true;
+      }
+    }
+  </script>
+</body>
+</html>
