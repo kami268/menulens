@@ -178,7 +178,7 @@
     });
 
     async function callGeminiAPI(apiKey, base64Data, imgWidth, imgHeight) {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
       const prompt = `你是一個專業菜單翻譯員。請分析圖片中的菜單：
 1. 找出所有主要菜名或餐點項目。
